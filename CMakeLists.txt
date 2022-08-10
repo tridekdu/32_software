@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 2.8)
+project( 32EyeMimic )
+find_package( OpenCV REQUIRED )
+find_package( json-c CONFIG )
+include_directories( ${OpenCV_INCLUDE_DIRS} )
+add_executable( eyemimic eyemimic.cpp )
+#target_link_libraries( eye_interface PRIVATE json-c::json-c)
+target_link_libraries( eyemimic ${OpenCV_LIBS} )

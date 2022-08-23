@@ -29,6 +29,8 @@ static int input_fps = 60;
 
 static int mode = 0;
 
+static bool passthrough = false;
+
 float x = 0;
 float y = 0;
 float w = input_width;
@@ -73,8 +75,8 @@ cv::Mat cam_procbuf_4;
 cv::Mat cam_procbuf_5;
 
 cv::Mat pupil(64, 64, CV_8UC3);
-cv::Mat eye_buffer_L(input_width, input_height, CV_32FC3, cv::Scalar(0));
-cv::Mat eye_buffer_R(input_width, input_height, CV_32FC3, cv::Scalar(0));
+cv::Mat eye_buffer_L(input_height, input_width, CV_32FC3, cv::Scalar(0));
+cv::Mat eye_buffer_R(input_height, input_width, CV_32FC3, cv::Scalar(0));
 //cv::Mat buffer_L(EMAT_W * 3, EMAT_H * 3, CV_8UC3);
 //cv::Mat buffer_R(EMAT_W * 3, EMAT_H * 3, CV_8UC3);
 
@@ -86,7 +88,6 @@ cv::Mat eye_out_preview;
 
 uint8_t* eoL = (uint8_t*)eye_out_L.data;
 uint8_t* eoR = (uint8_t*)eye_out_R.data;
-
 
 cv::Size frameSize(cv::Size(input_width, input_height));
 cv::Mat cameraMatrix(3, 3, cv::DataType<float>::type);
@@ -128,7 +129,7 @@ std::string gstreamer_pipeline(int width, int height, int framerate) {
     	" libcamerasrc ! video/x-raw, "
 		" width=(int)" + std::to_string(width) + ","
 		" height=(int)" + std::to_string(height) + ","
-		" framerate=(fraction)" + std::to_string(framerate) +"/1 ! videoconvert ! queue ! appsink sync=false";
+		" framerate=(fraction)" + std::to_string(framerate) +"/1 ! videoconvert ! appsink sync=false";
 }
 
 void updateMatrices(){
@@ -189,8 +190,8 @@ void updateMatrices(){
 	params.filterByCircularity = false;
 	//params.minCircularity = 0.1;
 	params.filterByArea = true;
-	params.minArea = 100.0f;
-	params.maxArea = 1000.0f;
+	params.minArea = c*3000.0f;
+	params.maxArea = q*3000.0f;
 
 
 }
@@ -294,9 +295,6 @@ void makeGUI(){
 	cv::createTrackbar("r", "adjustments", NULL, 360, callback_ROI_R);
 	cv::setTrackbarPos("r", "adjustments", trackbarPos.at(4));
 
-	cv::createTrackbar("q", "adjustments", NULL, 1000, callback_ROI_Q);
-	cv::setTrackbarPos("q", "adjustments", trackbarPos.at(5));
-
 	cv::createTrackbar("zx", "adjustments", NULL, 1000, callback_ROI_ZX);
 	cv::setTrackbarPos("zx", "adjustments", trackbarPos.at(6));
 
@@ -330,6 +328,9 @@ void makeGUI(){
 	cv::createTrackbar("c", "adjustments", NULL, 1000, callback_E_C);
 	cv::setTrackbarPos("c", "adjustments", trackbarPos.at(16));
 
+	cv::createTrackbar("q", "adjustments", NULL, 1000, callback_ROI_Q);
+	cv::setTrackbarPos("q", "adjustments", trackbarPos.at(5));
+
     cv::resizeWindow("adjustments", 240, 480);
     cv::moveWindow("adjustments", 240, 0);
 }
@@ -339,6 +340,7 @@ int main(int argc, char *argv[]) {
 
 	static ko_longopt_t longopts[] = {
 		{ "gst", ko_required_argument, 301 },
+		{ "passthrough", ko_required_argument, 302 },
 		{ NULL, 0, 0 }
 	};
 
@@ -349,6 +351,8 @@ int main(int argc, char *argv[]) {
 	while ((c = ketopt(&opt, argc, argv, 1, "xy:", longopts)) >= 0) {
 		if (c == 301){
 			pipeline = opt.arg;
+		} else if (c == 302){
+			passthrough = true;
 		} else if (c == '?') printf("unknown opt: -%c\n", opt.opt? opt.opt : ':');
 		else if (c == ':') printf("missing arg: -%c\n", opt.opt? opt.opt : ':');
 	}
@@ -379,12 +383,22 @@ int main(int argc, char *argv[]) {
 
 //        std::cout << "Capture!" << std::endl;
 
-		cv::cvtColor(cam_input, cam_gray, cv::COLOR_BGR2GRAY);
-		cv::remap(cam_gray, cam_remapped, mapx, mapy, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-		cv::rectangle(cam_remapped, roi_rect, cv::Scalar(255));
+		if(passthrough){
+
+			cv::resize(cam_input, eye_out_R, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
+			cv::resize(cam_input, eye_out_L, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
+
+			cv::imshow("cam_input", cam_input);
+			cv::hconcat(eye_out_L, eye_out_R, eye_out_preview);
+			cv::imshow("adjustments", eye_out_preview);
+
+		} else {
+			cv::cvtColor(cam_input, cam_gray, cv::COLOR_BGR2GRAY);
+			cv::remap(cam_gray, cam_remapped, mapx, mapy, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+			cv::rectangle(cam_remapped, roi_rect, cv::Scalar(255));
 //		cv::cvtColor(cam_input(roi_rect), cam_procbuf_1, cv::COLOR_BGR2GRAY );
 
-		cam_procbuf_1 = cam_remapped(roi_rect);
+			cam_procbuf_1 = cam_remapped(roi_rect);
 
 
 /*
@@ -398,36 +412,34 @@ int main(int argc, char *argv[]) {
         static int posY = moment01/area;
 */
 
-		cv::threshold(cam_procbuf_1, cam_procbuf_2, (int)(cut*254), 255, cv::THRESH_BINARY_INV);
+			cv::threshold(cam_procbuf_1, cam_procbuf_2, (int)(cut*254), 255, cv::THRESH_BINARY);
 //		cv::Canny(cam_procbuf_1, cam_procbuf_2, (int)(cut*254), 254, 3);
 
 //		cv::erode(cam_procbuf_2, cam_procbuf_3, erode_element, cv::Point(-1,-1), (int)(e*10));
 //		cv::dilate(cam_procbuf_3, cam_procbuf_5, dilate_element, cv::Point(-1,-1), (int)(d*10));
 
-		cv::erode(cam_procbuf_2, cam_procbuf_3, erode_element);
-		cv::dilate(cam_procbuf_3, cam_procbuf_5, dilate_element);
+			cv::bitwise_not(cam_procbuf_2, cam_procbuf_3);
+			cv::erode(cam_procbuf_3, cam_procbuf_4, erode_element);
+
+			cv::dilate(cam_procbuf_4, cam_procbuf_5, dilate_element);
 
 //		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_R, 0.2);
+//		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_L, 0.2);
 
 		// Detect blobs.
-		detector->detect( cam_procbuf_5, keypoints );
-		cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_R, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
-		cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_L, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+			detector->detect( cam_procbuf_5, keypoints );
+			//cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_R, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+			//cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_L, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
 
-		cv::resize(eye_buffer_R, eye_out_R, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
-		cv::resize(eye_buffer_L, eye_out_L, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
+			cv::resize(eye_buffer_R, eye_out_R, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
+			cv::resize(eye_buffer_L, eye_out_L, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
 
-
-/*
-		switch(mode){
-			default:
-			case 0:
-				cv::resize(cam_processed, eye_out_tmp, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
-				//cv::resize(cam_processed, eye_out_R, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
-				break;
+			cv::imshow("cam_buf", cam_procbuf_5);
+			cv::imshow("adjustments", eye_out_R);
+			cv::imshow("cam_input", cam_remapped);
+			cv::imshow("eyebuffer", eye_buffer_R);
 
 		}
-*/
 
 		//Make eye-images
 //		eye_out_L = cv::Mat::zeros(cv::Size(EMAT_W,EMAT_H), CV_8UC1);
@@ -439,35 +451,40 @@ int main(int argc, char *argv[]) {
 //		cv::imshow("eye_output_L", eye_out_L);
 //		cv::imshow("eye_output_R", eye_out_R);
 
-//		cv::hconcat(eye_out_L, eye_out_R, eye_out_preview);
-//		cv::imshow("adjustments", eye_out_preview);
-		cv::imshow("cam_input", cam_remapped);
-		cv::imshow("cam_buf", cam_procbuf_5);
 
-		//- PANEL OUTPUT -----------------------------------------------------------------
-		/*
+		//- PANEL OUTPUT -----------------------------------------------------------------/
 		driver_write(0b00000000000000000000000000000000);
 
 		for(int y=0; y < EMAT_H; y++) {
 			for(int x=0; x < EMAT_W; x++) {
+
 				uint dx = ((y < EMAT_H ? y % 2 == 0 : y % 2 != 0 ) ? x : (EMAT_W-1)-x);
-				uint dy = (y < EMAT_H ? 7-y%EMAT_H : y%EMAT_H );
-				uint32_t color = ( (eoR[dy*EMAT_W*3 + dx*3 + 0]/2) << 16) | ((eoR[dy*EMAT_W*3 + dx*3 + 1]/2) << 8) | (eoR[dy*EMAT_W*3 + dx*3 + 2]/2);
+				uint dy = 7-y%EMAT_H;
+
+				uint32_t color = ((eoR[dy*EMAT_W*3 + dx*3 + 0]/2) << 16) |
+								 ((eoR[dy*EMAT_W*3 + dx*3 + 1]/2) << 8) |
+								  (eoR[dy*EMAT_W*3 + dx*3 + 2]/2);
+
 				driver_write(brmask | (flip(color)));
 			}
 		}
 
 		for(int y=0; y < EMAT_H; y++) {
 			for(int x=0; x < EMAT_W; x++) {
-				uint dx = ((y < EMAT_H ? y % 2 == 0 : y % 2 != 0 ) ? x : (EMAT_W-1)-x);
-				uint dy = (y < EMAT_H ? 7-y%EMAT_H : y%EMAT_H );
-				uint32_t color = ( (eoL[dy*EMAT_W*3 + dx*3 + 0]/2) << 16) | ((eoL[dy*EMAT_W*3 + dx*3 + 1]/2) << 8) | (eoL[dy*EMAT_W*3 + dx*3 + 2]/2);
+
+				uint dx = (y % 2 != 0 ? x : (EMAT_W-1)-x);
+				uint dy = y%EMAT_H ;
+
+				uint32_t color = ((eoL[dy*EMAT_W*3 + dx*3 + 0]/2) << 16) |
+								 ((eoL[dy*EMAT_W*3 + dx*3 + 1]/2) << 8) |
+								  (eoL[dy*EMAT_W*3 + dx*3 + 2]/2);
+
 				driver_write(brmask | (flip(color)));
 			}
 		}
 
 		driver_write(0b11111111111111111111111111111111);
-		usleep(1000);
+		usleep(10000);
 		//--------------------------------------------------------------------------------*/
 
 		int key = cv::waitKey(16);

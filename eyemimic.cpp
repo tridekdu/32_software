@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -56,7 +57,7 @@ static int proc_f = 0;
 static uint32_t brmask = 0b00000000000000000000000010000111;
 //static uint32_t color = 0xAA6464;
 //static uint32_t eye_color = 0xAA6464;
-cv::Scalar eye_color(39,39,67);
+cv::Scalar eye_color(68,40,40);
 
 int pupil_min_x = input_width/2;
 int pupil_min_y = input_height/2;
@@ -74,9 +75,8 @@ cv::Mat cam_procbuf_3;
 cv::Mat cam_procbuf_4;
 cv::Mat cam_procbuf_5;
 
-cv::Mat pupil(64, 64, CV_8UC3);
-cv::Mat eye_buffer_L(input_height, input_width, CV_32FC3, cv::Scalar(0));
-cv::Mat eye_buffer_R(input_height, input_width, CV_32FC3, cv::Scalar(0));
+cv::Mat eye_buffer_L(input_height, input_width, CV_8UC3, cv::Scalar(0));
+cv::Mat eye_buffer_R(input_height, input_width, CV_8UC3, cv::Scalar(0));
 //cv::Mat buffer_L(EMAT_W * 3, EMAT_H * 3, CV_8UC3);
 //cv::Mat buffer_R(EMAT_W * 3, EMAT_H * 3, CV_8UC3);
 
@@ -134,7 +134,7 @@ std::string gstreamer_pipeline(int width, int height, int framerate) {
 
 void updateMatrices(){
 
-	cv::Point2f center((input_width)*0.5f, (input_height)*0.5f);
+	cv::Point2f center((input_width)*(0.5f), (input_height)*(0.5f));
     cv::Mat newRotMat = cv::getRotationMatrix2D(center, r, 1.0);
 
 	float rr = r*PI/180.0f;
@@ -143,13 +143,16 @@ void updateMatrices(){
 	float cx = input_width * 0.5f;
 	float cy = input_height * 0.5f;
 
-	cameraMatrix.at<float>(0, 0) = input_width * newRotMat.at<double>(0,0);
-	cameraMatrix.at<float>(0, 1) = input_width * newRotMat.at<double>(0,1);
-	cameraMatrix.at<float>(0, 2) = input_width * (1.0f - 2.0f*(0.5f-zx));
 
- 	cameraMatrix.at<float>(1, 0) = input_height * newRotMat.at<double>(1,0);
-	cameraMatrix.at<float>(1, 1) = input_height * newRotMat.at<double>(1,1);
-	cameraMatrix.at<float>(1, 2) = input_height * (1.0f - 2.0f*(0.5f-zy));
+	cameraMatrix.at<float>(0, 0) = (input_width) * newRotMat.at<double>(0,0);
+	cameraMatrix.at<float>(0, 1) = (input_width) * newRotMat.at<double>(0,1);
+	//cameraMatrix.at<float>(0, 2) = (input_width+x) * (1.0f - 2.0f*(0.5f-zx));
+	cameraMatrix.at<float>(0, 2) = zx*input_height+(input_width*abs(a) + input_height*abs(b))/2;
+
+ 	cameraMatrix.at<float>(1, 0) = (input_height) * newRotMat.at<double>(1,0);
+	cameraMatrix.at<float>(1, 1) = (input_height) * newRotMat.at<double>(1,1);
+	//cameraMatrix.at<float>(1, 2) = (input_height+y) * (1.0f - 2.0f*(0.5f-zy));
+	cameraMatrix.at<float>(1, 2) = zy*input_width+(input_width*abs(b) + input_height*abs(a))/2;
 
 	cameraMatrix.at<float>(2, 0) = 0.0f;
 	cameraMatrix.at<float>(2, 1) = 0.0f;
@@ -173,26 +176,25 @@ void updateMatrices(){
 
 	roi_rect = cv::Rect(x,y,w,h);
 
-	int ds = (int)(d*6);
-	int es = (int)(e*6);
+	int ds = (int)(d*16);
+	int es = (int)(e*16);
 
-    erode_element = cv::getStructuringElement( cv::MORPH_RECT, cv::Size( 1+es*2, 1+es*2 ), cv::Point(es,es));
+    erode_element = cv::getStructuringElement( cv::MORPH_ELLIPSE, cv::Size( 1+es*2, 1+es*2 ), cv::Point(es,es));
     dilate_element = cv::getStructuringElement( cv::MORPH_ELLIPSE, cv::Size( 1+ds*2, 1+ds*2 ), cv::Point(ds,ds));
 
-	//params.minThreshold = 10;
-	//params.maxThreshold = 200;
-	params.minDistBetweenBlobs = 50.0f;
+	params.minThreshold = cut*255;
+	params.maxThreshold = c*255;
+	params.minDistBetweenBlobs = 100.0f;
 	params.filterByInertia = false;
 	//params.minInertiaRatio = 0.01;
 	params.filterByConvexity = false;
 	//params.minConvexity = 0.87;
 	params.filterByColor = false;
-	params.filterByCircularity = false;
+	//params.filterByCircularity = true;
 	//params.minCircularity = 0.1;
 	params.filterByArea = true;
-	params.minArea = c*3000.0f;
+	params.minArea = 10.0f;
 	params.maxArea = q*3000.0f;
-
 
 }
 
@@ -256,6 +258,7 @@ void saveTrackbars(){
 }
 
 void loadTrackbars(){
+
 	std::cout << "Loadint Trackbars" << std::endl;
 
 	//std::ifstream file(statefilePath, std::ios::in | std::ifstream::binary);
@@ -336,7 +339,14 @@ void makeGUI(){
 }
 // --------------------------------------------------
 
+cv::KeyPoint pupil;
+std::vector<std::vector<cv::Point>> contours1;
+std::vector<cv::Vec4i> hierarchy1;
+
+
 int main(int argc, char *argv[]) {
+
+    cv::Mat img_blink = cv::imread("blink.png", cv::IMREAD_COLOR);
 
 	static ko_longopt_t longopts[] = {
 		{ "gst", ko_required_argument, 301 },
@@ -358,7 +368,6 @@ int main(int argc, char *argv[]) {
 	}
 
     std::cout << "Using pipeline: \n\t" << pipeline << "\n\n\n";
-
     cv::VideoCapture cap(pipeline, cv::CAP_GSTREAMER);
 
     if(!cap.isOpened()) {
@@ -395,10 +404,9 @@ int main(int argc, char *argv[]) {
 		} else {
 			cv::cvtColor(cam_input, cam_gray, cv::COLOR_BGR2GRAY);
 			cv::remap(cam_gray, cam_remapped, mapx, mapy, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-			cv::rectangle(cam_remapped, roi_rect, cv::Scalar(255));
+			//cv::rectangle(cam_remapped, roi_rect, cv::Scalar(255));
 //		cv::cvtColor(cam_input(roi_rect), cam_procbuf_1, cv::COLOR_BGR2GRAY );
 
-			cam_procbuf_1 = cam_remapped(roi_rect);
 
 
 /*
@@ -412,32 +420,105 @@ int main(int argc, char *argv[]) {
         static int posY = moment01/area;
 */
 
-			cv::threshold(cam_procbuf_1, cam_procbuf_2, (int)(cut*254), 255, cv::THRESH_BINARY);
+		cv::threshold(cam_remapped, cam_procbuf_2, (int)(cut*255), 255, cv::THRESH_BINARY_INV);
 //		cv::Canny(cam_procbuf_1, cam_procbuf_2, (int)(cut*254), 254, 3);
 
 //		cv::erode(cam_procbuf_2, cam_procbuf_3, erode_element, cv::Point(-1,-1), (int)(e*10));
 //		cv::dilate(cam_procbuf_3, cam_procbuf_5, dilate_element, cv::Point(-1,-1), (int)(d*10));
 
-			cv::bitwise_not(cam_procbuf_2, cam_procbuf_3);
-			cv::erode(cam_procbuf_3, cam_procbuf_4, erode_element);
 
-			cv::dilate(cam_procbuf_4, cam_procbuf_5, dilate_element);
 
-//		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_R, 0.2);
-//		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_L, 0.2);
 
-		// Detect blobs.
-			detector->detect( cam_procbuf_5, keypoints );
-			//cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_R, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
-			//cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_L, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+
+//			cv::bitwise_not(cam_procbuf_2, cam_procbuf_2);
+			cv::erode(cam_procbuf_2, cam_procbuf_3, erode_element);
+			cv::dilate(cam_procbuf_3, cam_procbuf_5, dilate_element);
+
+			cv::findContours(cam_procbuf_5, contours1, hierarchy1, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+
+
+//			eye_buffer_R = cv::Mat::zeros(cv::Size(EMAT_W,EMAT_H), CV_8UC1);
+
+//			detector->detect( cam_procbuf_5, keypoints );
+//			cv::drawKeypoints( eye_buffer_R, keypoints, eye_buffer_R, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+//			cv::drawKeypoints( cam_procbuf_5, keypoints, eye_buffer_L, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+//			cv::drawKeypoints( eye_buffer_L, keypoints, eye_buffer_L, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+//			cv::drawKeypoints( eye_buffer_R, keypoints, eye_buffer_R, eye_color, cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+
+
+/*
+		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_R, 0.2);
+		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_L, 0.2);
+*/
+
+//			cv::multiply( cam_procbuf_5, eye_buffer_R, eye_color );
+			cam_procbuf_1 = cam_remapped(roi_rect);
+
+    	eye_buffer_R = cv::Mat::zeros(cv::Size(input_width, input_height), CV_8UC3);
+    	eye_buffer_L = cv::Mat::zeros(cv::Size(input_width, input_height), CV_8UC3);
+
+		cv::cvtColor(cam_remapped, cam_remapped, cv::COLOR_GRAY2BGR);
+
+
+//		cv::drawKeypoints( cam_remapped, keypoints, cam_remapped, cv::Scalar(0), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+		bool blink = false;
+		if(mode == 0)
+		if(contours1.size() > 0){
+
+			double area = 9999;
+			cv::Rect br;
+			double center_x = 0;
+			double center_y = 0;
+
+			for(int i=0; i < contours1.size(); i++){
+				double ca = cv::contourArea(contours1[i]);
+				//if(ca < area){
+				//	area = ca;
+					br = cv::boundingRect(contours1[i]);
+				//}
+				center_x += br.x;
+				center_y += br.y;
+			}
+
+			center_x /= contours1.size();
+			center_y /= contours1.size();
+
+			//br = cv::boundingRect(contours1[contours1.size() - 1]);
+
+			cv::rectangle(cam_remapped, br, cv::Scalar(255, 0, 255));
+
+//			        std::cout << i << std::endl;
+//			        std::cout << bounding_rect << std::endl;
+
+		  cv::ellipse( eye_buffer_R,
+      				   cv::Point(center_x, center_y),
+       				   cv::Size( 55, 55 ),
+       				   0,
+       				   0,
+       				   360,
+      				   eye_color,
+      				   24,
+       				   cv::LINE_4 );
+
+		 eye_buffer_L = eye_buffer_R;
+
+		} else {
+			blink = true;
+			//img_blink.copyTo(eye_buffer_R);
+			cv::resize(img_blink, eye_buffer_R, cv::Size(input_width, input_height), 0, 0, cv::INTER_LINEAR); //optimize
+			cv::flip(eye_buffer_R, eye_buffer_L, 1);
+		}
+//    		eye_buffer_L = cv::Mat::zeros(cv::Size(EMAT_W,EMAT_H), CV_8UC1);
 
 			cv::resize(eye_buffer_R, eye_out_R, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
 			cv::resize(eye_buffer_L, eye_out_L, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
 
-			cv::imshow("cam_buf", cam_procbuf_5);
+			cc:drawContours(cam_remapped, contours1, -1, cv::Scalar(254), 2);
+
+			//cv::imshow("cam_buf", cam_procbuf_5);
 			cv::imshow("adjustments", eye_out_R);
 			cv::imshow("cam_input", cam_remapped);
-			cv::imshow("eyebuffer", eye_buffer_R);
+			cv::imshow("buffer", cam_procbuf_5);
 
 		}
 

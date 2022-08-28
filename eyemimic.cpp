@@ -64,6 +64,9 @@ int pupil_min_y = input_height/2;
 int pupil_max_x = input_width/2;
 int pupil_max_y = input_height/2;
 
+double pupil_x = 0;
+double pupil_y = 0;
+
 cv::Rect roi_rect(x, y, w, h);
 
 cv::Mat cam_input;
@@ -77,6 +80,10 @@ cv::Mat cam_procbuf_5;
 
 cv::Mat eye_buffer_L(input_height, input_width, CV_8UC3, cv::Scalar(0));
 cv::Mat eye_buffer_R(input_height, input_width, CV_8UC3, cv::Scalar(0));
+
+cv::Mat effect_buffer(input_height, input_width, CV_32FC3, cv::Scalar(0));
+cv::Mat accum_buffer(input_height, input_width, CV_32FC3, cv::Scalar(0));
+
 //cv::Mat buffer_L(EMAT_W * 3, EMAT_H * 3, CV_8UC3);
 //cv::Mat buffer_R(EMAT_W * 3, EMAT_H * 3, CV_8UC3);
 
@@ -343,10 +350,18 @@ cv::KeyPoint pupil;
 std::vector<std::vector<cv::Point>> contours1;
 std::vector<cv::Vec4i> hierarchy1;
 
+float t;
+
+int bt = 0;
 
 int main(int argc, char *argv[]) {
 
     cv::Mat img_blink = cv::imread("blink.png", cv::IMREAD_COLOR);
+    cv::Mat img_happ = cv::imread("happ.png", cv::IMREAD_COLOR);
+    //cv::Mat img_eff2 = cv::imread("eff2.png", cv::IMREAD_COLOR);
+    //cv::Mat img_eff3 = cv::imread("eff3.png", cv::IMREAD_COLOR);
+    //cv::Mat img_eff4 = cv::imread("eff4.png", cv::IMREAD_COLOR);
+    //cv::Mat img_eff5 = cv::imread("eff5.png", cv::IMREAD_COLOR);
 
 	static ko_longopt_t longopts[] = {
 		{ "gst", ko_required_argument, 301 },
@@ -420,22 +435,19 @@ int main(int argc, char *argv[]) {
         static int posY = moment01/area;
 */
 
+		//cv::adaptiveThreshold(cam_remapped, cam_procbuf_2, 255, cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY_INV, 3, 11);
+
 		cv::threshold(cam_remapped, cam_procbuf_2, (int)(cut*255), 255, cv::THRESH_BINARY_INV);
 //		cv::Canny(cam_procbuf_1, cam_procbuf_2, (int)(cut*254), 254, 3);
 
 //		cv::erode(cam_procbuf_2, cam_procbuf_3, erode_element, cv::Point(-1,-1), (int)(e*10));
 //		cv::dilate(cam_procbuf_3, cam_procbuf_5, dilate_element, cv::Point(-1,-1), (int)(d*10));
 
-
-
-
-
 //			cv::bitwise_not(cam_procbuf_2, cam_procbuf_2);
 			cv::erode(cam_procbuf_2, cam_procbuf_3, erode_element);
 			cv::dilate(cam_procbuf_3, cam_procbuf_5, dilate_element);
 
 			cv::findContours(cam_procbuf_5, contours1, hierarchy1, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
-
 
 //			eye_buffer_R = cv::Mat::zeros(cv::Size(EMAT_W,EMAT_H), CV_8UC1);
 
@@ -447,22 +459,24 @@ int main(int argc, char *argv[]) {
 
 
 /*
-		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_R, 0.2);
 		cv::accumulateWeighted(cam_procbuf_5, eye_buffer_L, 0.2);
 */
 
 //			cv::multiply( cam_procbuf_5, eye_buffer_R, eye_color );
 			cam_procbuf_1 = cam_remapped(roi_rect);
 
-    	eye_buffer_R = cv::Mat::zeros(cv::Size(input_width, input_height), CV_8UC3);
-    	eye_buffer_L = cv::Mat::zeros(cv::Size(input_width, input_height), CV_8UC3);
-
+		if(mode > 0){
+	    	eye_buffer_R = cv::Mat::zeros(cv::Size(input_width, input_height), CV_32FC3);
+    		eye_buffer_L = cv::Mat::zeros(cv::Size(input_width, input_height), CV_32FC3);
+		} else {
+	    	eye_buffer_R = cv::Mat::zeros(cv::Size(input_width, input_height), CV_8UC3);
+    		eye_buffer_L = cv::Mat::zeros(cv::Size(input_width, input_height), CV_8UC3);
+		}
 		cv::cvtColor(cam_remapped, cam_remapped, cv::COLOR_GRAY2BGR);
 
 
 //		cv::drawKeypoints( cam_remapped, keypoints, cam_remapped, cv::Scalar(0), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
 		bool blink = false;
-		if(mode == 0)
 		if(contours1.size() > 0){
 
 			double area = 9999;
@@ -490,8 +504,11 @@ int main(int argc, char *argv[]) {
 //			        std::cout << i << std::endl;
 //			        std::cout << bounding_rect << std::endl;
 
-		  cv::ellipse( eye_buffer_R,
-      				   cv::Point(center_x, center_y),
+			pupil_x = pupil_x*0.6 + center_x*0.4;
+			pupil_y = pupil_y*0.6 + center_y*0.4;
+			if(mode < 2){
+				cv::ellipse( eye_buffer_R,
+      				   cv::Point(pupil_x, pupil_y),
        				   cv::Size( 55, 55 ),
        				   0,
        				   0,
@@ -500,15 +517,71 @@ int main(int argc, char *argv[]) {
       				   24,
        				   cv::LINE_4 );
 
-		 eye_buffer_L = eye_buffer_R;
-
+				eye_buffer_R.copyTo(eye_buffer_L);
+			}
 		} else {
 			blink = true;
 			//img_blink.copyTo(eye_buffer_R);
-			cv::resize(img_blink, eye_buffer_R, cv::Size(input_width, input_height), 0, 0, cv::INTER_LINEAR); //optimize
+			if(mode > 1){
+				cv::resize(img_happ, eye_buffer_R, cv::Size(input_width, input_height), 0, 0, cv::INTER_LINEAR); //optimize
+			} else {
+				cv::resize(img_blink, eye_buffer_R, cv::Size(input_width, input_height), 0, 0, cv::INTER_LINEAR); //optimize
+			}
 			cv::flip(eye_buffer_R, eye_buffer_L, 1);
 		}
 //    		eye_buffer_L = cv::Mat::zeros(cv::Size(EMAT_W,EMAT_H), CV_8UC1);
+
+		if(blink){
+			bt++;
+	        std::cout << bt << std::endl;
+			if(bt >= 50){
+				mode++;
+				bt = 0;
+	            std::cout << "!!!!!!!!!!!!!!!MODE!!!!!!!!!!!!!!!!" << std::endl;
+				if(mode > 5) mode = 0;
+			}
+		} else {
+			if(bt >= 40){
+				mode = 0;
+			}
+
+			bt = 0;
+		}
+
+			t += 0.1f;
+
+			if(mode > 0) eye_buffer_R.convertTo(effect_buffer, CV_32FC3);
+
+	    	//effect_buffer = cv::Mat::zeros(cv::Size(input_width, input_height), CV_32FC3);
+
+			//cv::cvtColor(effect_buffer, effect_buffer, cv::COLOR_BGR2HSV);
+
+			if(mode > 2 && mode < 4){
+				for(int i=2; i < input_width; i += 2){
+					cv::Point p1(i-2, (int)(input_height*(sin(cos(t) + i*0.2f))));
+					cv::Point p2( i , (int)(input_height*(sin(cos(t) + i*0.2f))));
+	    			cv::line(effect_buffer, p1, p2, cv::Scalar(128, 0, 255), 3, cv::LINE_4);
+				}
+				for(int i=3; i < input_width; i += 3){
+					cv::Point p1(i-3, (int)(input_height*(cos(t + i*0.12f))));
+					cv::Point p2( i , (int)(input_height*(cos(t + i*0.12f))));
+	    			cv::line(effect_buffer, p1, p2, cv::Scalar(192, 0, 128), 3, cv::LINE_4);
+				}
+			}
+
+			if(mode > 3){
+					cv::Point p1( (int)(pupil_x - input_width*sin(t*6)), (int)(pupil_y - input_height*cos(t*6)));
+					cv::Point p2( (int)(pupil_x + input_width*sin(t*6)), (int)(pupil_y + input_height*cos(t*6)));
+	    			cv::line(effect_buffer, p1, p2, cv::Scalar(240, 245, 0), 12, cv::LINE_4);
+			}
+
+			if(mode > 0){
+				cv::accumulateWeighted(effect_buffer, accum_buffer, 0.2);
+				accum_buffer.convertTo(eye_buffer_R, CV_8UC3);
+				cv::flip(eye_buffer_R, eye_buffer_L, 1);
+			}
+
+			//accum_buffer.convertTo(eye_buffer_L, CV_8UC3);
 
 			cv::resize(eye_buffer_R, eye_out_R, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
 			cv::resize(eye_buffer_L, eye_out_L, cv::Size(EMAT_W, EMAT_H), 0, 0, cv::INTER_NEAREST);
